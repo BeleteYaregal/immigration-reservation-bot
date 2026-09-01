@@ -1,0 +1,15 @@
+﻿services:
+  - type: web
+    name: ethiopian-immigration-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
