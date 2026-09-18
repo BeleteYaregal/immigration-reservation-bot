@@ -1,37 +1,34 @@
-﻿const Database = require('better-sqlite3');
+﻿const fs = require('fs');
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../../data/reservations.db');
-const db = new Database(dbPath);
+const dataDir = path.resolve(__dirname, '../../data');
+const dbFilePath = path.join(dataDir, 'reservations.json');
 
-// Enable WAL mode for better concurrency and reliability
-db.pragma('journal_mode = WAL');
+// Ensure data directory exists
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
-// Initialize database schema
-const initSchema = () => {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS reservations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      queue_code TEXT UNIQUE NOT NULL,
-      telegram_id INTEGER NOT NULL,
-      username TEXT,
-      service_type TEXT NOT NULL,
-      full_name TEXT NOT NULL,
-      phone_number TEXT NOT NULL,
-      preferred_date TEXT NOT NULL,
-      document_file_id TEXT,
-      status TEXT DEFAULT 'PENDING',
-      admin_note TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+// Initialize JSON database if not exists
+if (!fs.existsSync(dbFilePath)) {
+  fs.writeFileSync(dbFilePath, JSON.stringify({ reservations: [], nextId: 1 }, null, 2), 'utf8');
+}
 
-    CREATE INDEX IF NOT EXISTS idx_reservations_status ON reservations(status);
-    CREATE INDEX IF NOT EXISTS idx_reservations_telegram_id ON reservations(telegram_id);
-    CREATE INDEX IF NOT EXISTS idx_reservations_queue_code ON reservations(queue_code);
-  `);
+const loadData = () => {
+  try {
+    const raw = fs.readFileSync(dbFilePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (e) {
+    return { reservations: [], nextId: 1 };
+  }
 };
 
-initSchema();
+const saveData = (data) => {
+  fs.writeFileSync(dbFilePath, JSON.stringify(data, null, 2), 'utf8');
+};
 
-module.exports = db;
+module.exports = {
+  loadData,
+  saveData,
+  dbFilePath
+};

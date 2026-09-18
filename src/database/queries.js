@@ -1,4 +1,4 @@
-﻿const db = require('./db');
+﻿const { loadData, saveData } = require('./db');
 
 const createReservation = ({
   queueCode,
@@ -10,97 +10,109 @@ const createReservation = ({
   preferredDate,
   documentFileId = null,
 }) => {
-  const stmt = db.prepare(`
-    INSERT INTO reservations (
-      queue_code, telegram_id, username, service_type, full_name,
-      phone_number, preferred_date, document_file_id, status
-    ) VALUES (
-      @queueCode, @telegramId, @username, @serviceType, @fullName,
-      @phoneNumber, @preferredDate, @documentFileId, 'PENDING'
-    )
-  `);
+  const data = loadData();
+  const now = new Date().toISOString();
 
-  const result = stmt.run({
-    queueCode,
-    telegramId,
-    username,
-    serviceType,
-    fullName,
-    phoneNumber,
-    preferredDate,
-    documentFileId,
-  });
+  const newReservation = {
+    id: data.nextId++,
+    queue_code: queueCode,
+    telegram_id: telegramId,
+    username: username || null,
+    service_type: serviceType,
+    full_name: fullName,
+    phone_number: phoneNumber,
+    preferred_date: preferredDate,
+    document_file_id: documentFileId,
+    status: 'PENDING',
+    admin_note: null,
+    created_at: now,
+    updated_at: now,
+  };
 
-  return { id: result.lastInsertRowid, queueCode };
+  data.reservations.push(newReservation);
+  saveData(data);
+
+  return { id: newReservation.id, queueCode };
 };
 
 const getReservationByCode = (queueCode) => {
-  const stmt = db.prepare('SELECT * FROM reservations WHERE queue_code = ?');
-  return stmt.get(queueCode);
+  const data = loadData();
+  return data.reservations.find(
+    (r) => r.queue_code.toUpperCase() === queueCode.toUpperCase()
+  ) || null;
 };
 
 const getReservationsByTelegramId = (telegramId) => {
-  const stmt = db.prepare('SELECT * FROM reservations WHERE telegram_id = ? ORDER BY created_at DESC');
-  return stmt.all(telegramId);
+  const data = loadData();
+  return data.reservations
+    .filter((r) => r.telegram_id === telegramId)
+    .sort((a, b) => b.id - a.id);
 };
 
 const getPendingReservations = (limit = 20) => {
-  const stmt = db.prepare(`
-    SELECT * FROM reservations 
-    WHERE status = 'PENDING' 
-    ORDER BY id ASC 
-    LIMIT ?
-  `);
-  return stmt.all(limit);
+  const data = loadData();
+  return data.reservations
+    .filter((r) => r.status === 'PENDING')
+    .sort((a, b) => a.id - b.id)
+    .slice(0, limit);
 };
 
 const getNextPending = () => {
-  const stmt = db.prepare(`
-    SELECT * FROM reservations 
-    WHERE status = 'PENDING' 
-    ORDER BY id ASC 
-    LIMIT 1
-  `);
-  return stmt.get();
+  const data = loadData();
+  return data.reservations.find((r) => r.status === 'PENDING') || null;
 };
 
 const updateStatus = (idOrCode, status, adminNote = null) => {
+  const data = loadData();
   const isCode = typeof idOrCode === 'string' && idOrCode.startsWith('ICS-');
-  const sql = isCode
-    ? `UPDATE reservations SET status = ?, admin_note = ?, updated_at = CURRENT_TIMESTAMP WHERE queue_code = ?`
-    : `UPDATE reservations SET status = ?, admin_note = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
-
-  const stmt = db.prepare(sql);
-  const info = stmt.run(status, adminNote, idOrCode);
   
-  if (info.changes > 0) {
-    const fetchSql = isCode
-      ? 'SELECT * FROM reservations WHERE queue_code = ?'
-      : 'SELECT * FROM reservations WHERE id = ?';
-    return db.prepare(fetchSql).get(idOrCode);
+  const reservation = data.reservations.find((r) => {
+    if (isCode) {
+      return r.queue_code.toUpperCase() === idOrCode.toUpperCase();
+    }
+    return r.id === parseInt(idOrCode, 10);
+  });
+
+  if (!reservation) return null;
+
+  reservation.status = status;
+  if (adminNote !== null) {
+    reservation.admin_note = adminNote;
   }
-  return null;
+  reservation.updated_at = new Date().toISOString();
+
+  saveData(data);
+  return reservation;
 };
 
 const cancelReservation = (queueCode, telegramId) => {
-  const stmt = db.prepare(`
-    UPDATE reservations 
-    SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP 
-    WHERE queue_code = ? AND telegram_id = ? AND status = 'PENDING'
-  `);
-  const info = stmt.run(queueCode, telegramId);
-  return info.changes > 0;
+  const data = loadData();
+  const reservation = data.reservations.find(
+    (r) => r.queue_code.toUpperCase() === queueCode.toUpperCase() &&
+           r.telegram_id === telegramId &&
+           r.status === 'PENDING'
+  );
+
+  if (!reservation) return false;
+
+  reservation.status = 'CANCELLED';
+  reservation.updated_at = new Date().toISOString();
+  saveData(data);
+  return true;
 };
 
 const getStats = () => {
-  const total = db.prepare('SELECT COUNT(*) as count FROM reservations').get().count;
-  const pending = db.prepare("SELECT COUNT(*) as count FROM reservations WHERE status = 'PENDING'").get().count;
-  const processing = db.prepare("SELECT COUNT(*) as count FROM reservations WHERE status = 'PROCESSING'").get().count;
-  const completed = db.prepare("SELECT COUNT(*) as count FROM reservations WHERE status = 'COMPLETED'").get().count;
-  const rejected = db.prepare("SELECT COUNT(*) as count FROM reservations WHERE status = 'REJECTED'").get().count;
-  const cancelled = db.prepare("SELECT COUNT(*) as count FROM reservations WHERE status = 'CANCELLED'").get().count;
+  const data = loadData();
+  const list = data.reservations;
 
-  return { total, pending, processing, completed, rejected, cancelled };
+  return {
+    total: list.length,
+    pending: list.filter((r) => r.status === 'PENDING').length,
+    processing: list.filter((r) => r.status === 'PROCESSING').length,
+    completed: list.filter((r) => r.status === 'COMPLETED').length,
+    rejected: list.filter((r) => r.status === 'REJECTED').length,
+    cancelled: list.filter((r) => r.status === 'CANCELLED').length,
+  };
 };
 
 module.exports = {
